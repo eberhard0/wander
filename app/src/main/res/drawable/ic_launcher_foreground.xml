@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Map pin with a dotted trail, kept inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M58,27 C49.2,27 42,34.2 42,43 C42,54.5 58,70 58,70 C58,70 74,54.5 74,43 C74,34.2 66.8,27 58,27 Z"
+        android:fillColor="#3DDC97" />
+    <path
+        android:pathData="M58,43 m-5.5,0 a5.5,5.5 0 1 0 11,0 a5.5,5.5 0 1 0 -11,0"
+        android:fillColor="#0B0F14" />
+    <path
+        android:pathData="M34,62 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M38,72 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M48,78 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FFFFFF" />
+</vector>
