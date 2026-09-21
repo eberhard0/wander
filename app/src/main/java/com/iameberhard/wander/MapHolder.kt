@@ -2,8 +2,10 @@ package com.iameberhard.wander
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
+import androidx.core.content.ContextCompat
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -14,7 +16,6 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
-import org.osmdroid.views.overlay.TilesOverlay
 import java.io.File
 
 /** Owns the OpenStreetMap view and the three things drawn on it: the pin, the mock position, the route. */
@@ -54,6 +55,7 @@ class MapHolder(context: Context, private val places: Places, onTap: (LatLon) ->
             setOnClickListener { _, _, _ -> false }
         }
         pin = Marker(view).apply {
+            setIcon(ContextCompat.getDrawable(context, R.drawable.ic_pin))
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             setInfoWindow(null)
             setOnMarkerClickListener { _, _ -> false }
@@ -90,9 +92,9 @@ class MapHolder(context: Context, private val places: Places, onTap: (LatLon) ->
         view.controller.setCenter(GeoPoint(centre.lat, centre.lon))
     }
 
-    /** OSM's standard tiles only come in light; inverting them is a decent night map. */
+    /** OSM's standard tiles only come in light; [NIGHT] recolours them for dark mode. */
     fun setDark(dark: Boolean) {
-        view.overlayManager.tilesOverlay.setColorFilter(if (dark) TilesOverlay.INVERT_COLORS else null)
+        view.overlayManager.tilesOverlay.setColorFilter(if (dark) NIGHT else null)
         view.invalidate()
     }
 
@@ -125,3 +127,16 @@ class MapHolder(context: Context, private val places: Places, onTap: (LatLon) ->
         view.invalidate()
     }
 }
+
+/**
+ * Night palette: invert the brightness, then turn the hue half a circle so colours come back to where they
+ * were – sea stays blue, woods green – just dark. A plain invert gives brown sea and purple land.
+ */
+private val NIGHT = ColorMatrixColorFilter(
+    floatArrayOf(
+        0.574f, -1.43f, -0.144f, 0f, 255f,
+        -0.426f, -0.43f, -0.144f, 0f, 255f,
+        -0.426f, -1.43f, 0.856f, 0f, 255f,
+        0f, 0f, 0f, 1f, 0f,
+    ),
+)
