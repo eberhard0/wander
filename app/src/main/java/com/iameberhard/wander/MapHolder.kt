@@ -2,141 +2,231 @@ package com.iameberhard.wander
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Paint
-import android.graphics.drawable.GradientDrawable
 import androidx.core.content.ContextCompat
-import org.osmdroid.config.Configuration
-import org.osmdroid.events.MapEventsReceiver
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.BoundingBox
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.CustomZoomButtonsController
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.MapEventsOverlay
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
-import java.io.File
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconAnchor
+import org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
+import org.maplibre.android.style.layers.PropertyFactory.lineCap
+import org.maplibre.android.style.layers.PropertyFactory.lineColor
+import org.maplibre.android.style.layers.PropertyFactory.lineJoin
+import org.maplibre.android.style.layers.PropertyFactory.lineWidth
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Point
 
-/** Owns the OpenStreetMap view and the three things drawn on it: the pin, the mock position, the route. */
-class MapHolder(context: Context, private val places: Places, onTap: (LatLon) -> Unit) {
+/**
+ * Owns the MapLibre view and the three things drawn on it: the pin, the mock position, the route.
+ * Vector tiles come from OpenFreeMap (no key); the bundled styles label everything in English.
+ *
+ * The map and its style load asynchronously – and the style is swapped when the system theme changes – so
+ * what should be shown is kept here and redrawn whenever a style becomes ready.
+ */
+class MapHolder(private val context: Context, private val places: Places, onTap: (LatLon) -> Unit) {
 
     val view: MapView
 
-    private val route: Polyline
-    private val pin: Marker
-    private val mock: Marker
+    private var map: MapLibreMap? = null
+    private var style: Style? = null
+    private var dark = false
+    private var shownDark: Boolean? = null
+    private var pin: LatLon? = null
+    private var mock: LatLon? = null
+    private var route: List<LatLon> = emptyList()
+    /** A camera move asked for before the map was ready. */
+    private var pendingCamera: (() -> Unit)? = null
+
+    private val padding = (96 * context.resources.displayMetrics.density).toInt()
+    private var started = false
+    private var resumed = false
+    private var destroyed = false
+
+    val lifecycleObserver = LifecycleEventObserver { _, event ->
+        when (event) {
+            Lifecycle.Event.ON_START -> start()
+            Lifecycle.Event.ON_RESUME -> resume()
+            Lifecycle.Event.ON_PAUSE -> pause()
+            Lifecycle.Event.ON_STOP -> stop()
+            else -> Unit
+        }
+    }
 
     init {
-        Configuration.getInstance().apply {
-            userAgentValue = Net.USER_AGENT
-            // Keep the tile cache in the app's own cache dir so it needs no storage permission.
-            osmdroidBasePath = File(context.cacheDir, "osmdroid")
-            osmdroidTileCache = File(context.cacheDir, "osmdroid/tiles")
-        }
-
-        view = MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
-            setMultiTouchControls(true)
-            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            isTilesScaledToDpi = true
-            setMinZoomLevel(3.0)
-            isVerticalMapRepetitionEnabled = false
-            setScrollableAreaLimitLatitude(MapView.getTileSystem().maxLatitude, MapView.getTileSystem().minLatitude, 0)
-        }
-
-        val density = context.resources.displayMetrics.density
-
-        route = Polyline(view).apply {
-            outlinePaint.color = Color.rgb(0x1E, 0x88, 0xE5)
-            outlinePaint.strokeWidth = 5 * density
-            outlinePaint.strokeCap = Paint.Cap.ROUND
-            outlinePaint.strokeJoin = Paint.Join.ROUND
-            setOnClickListener { _, _, _ -> false }
-        }
-        pin = Marker(view).apply {
-            setIcon(ContextCompat.getDrawable(context, R.drawable.ic_pin))
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            setInfoWindow(null)
-            setOnMarkerClickListener { _, _ -> false }
-            isEnabled = false
-        }
-        mock = Marker(view).apply {
-            setIcon(GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(0x3D, 0xDC, 0x97))
-                setStroke((3 * density).toInt(), Color.WHITE)
-                setSize((22 * density).toInt(), (22 * density).toInt())
-            })
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            setInfoWindow(null)
-            setOnMarkerClickListener { _, _ -> false }
-            isEnabled = false
-        }
-
-        val taps = MapEventsOverlay(object : MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                onTap(LatLon(p.latitude, p.longitude))
-                return true
+        MapLibre.getInstance(context)
+        view = MapView(context)
+        view.onCreate(null)
+        view.getMapAsync { ready ->
+            map = ready
+            ready.uiSettings.apply {
+                setLogoEnabled(false)
+                setAttributionEnabled(false) // credited in our own corner text instead
+                setCompassEnabled(false)
+                setRotateGesturesEnabled(false)
+                setTiltGesturesEnabled(false)
             }
-
-            override fun longPressHelper(p: GeoPoint): Boolean {
-                onTap(LatLon(p.latitude, p.longitude))
-                return true
+            val (centre, zoom) = places.camera ?: (LatLon(50.0, 10.0) to 3.5)
+            ready.cameraPosition = CameraPosition.Builder().target(LatLng(centre.lat, centre.lon)).zoom(zoom).build()
+            ready.addOnMapClickListener { point ->
+                onTap(LatLon(point.latitude, point.longitude))
+                true
             }
-        })
-        view.overlays.addAll(listOf(taps, route, mock, pin))
-
-        val (centre, zoom) = places.camera ?: (LatLon(50.0, 10.0) to 4.5)
-        view.controller.setZoom(zoom)
-        view.controller.setCenter(GeoPoint(centre.lat, centre.lon))
+            ready.addOnMapLongClickListener { point ->
+                onTap(LatLon(point.latitude, point.longitude))
+                true
+            }
+            loadStyle()
+        }
     }
 
-    /** OSM's standard tiles only come in light; [NIGHT] recolours them for dark mode. */
     fun setDark(dark: Boolean) {
-        view.overlayManager.tilesOverlay.setColorFilter(if (dark) NIGHT else null)
-        view.invalidate()
+        this.dark = dark
+        loadStyle()
     }
 
-    fun showPin(point: LatLon?) = place(pin, point)
+    fun showPin(point: LatLon?) {
+        pin = point
+        draw()
+    }
 
-    fun showMock(point: LatLon?) = place(mock, point)
+    fun showMock(point: LatLon?) {
+        mock = point
+        draw()
+    }
 
     fun showRoute(points: List<LatLon>, fit: Boolean) {
-        val geoPoints = points.map { GeoPoint(it.lat, it.lon) }
-        route.setPoints(geoPoints)
+        route = points
+        draw()
         if (fit && points.size >= 2) {
-            val box = BoundingBox.fromGeoPoints(geoPoints)
-            view.post { view.zoomToBoundingBox(box.increaseByScale(1.6f), true) }
+            whenReady { map ->
+                try {
+                    val bounds = LatLngBounds.Builder().includes(points.map { LatLng(it.lat, it.lon) }).build()
+                    map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding), 600)
+                } catch (_: RuntimeException) {
+                    // Start and end in one spot: no box to fit.
+                }
+            }
         }
-        view.invalidate()
     }
 
     fun centreOn(point: LatLon) {
-        view.controller.animateTo(GeoPoint(point.lat, point.lon), maxOf(view.zoomLevelDouble, 16.0), 600L)
+        whenReady { map ->
+            val zoom = maxOf(map.cameraPosition.zoom, 15.0)
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(point.lat, point.lon), zoom), 600)
+        }
     }
 
     fun saveCamera() {
-        val centre = view.mapCenter
-        places.camera = LatLon(centre.latitude, centre.longitude) to view.zoomLevelDouble
+        val camera = map?.cameraPosition ?: return
+        val target = camera.target ?: return
+        places.camera = LatLon(target.latitude, target.longitude) to camera.zoom
     }
 
-    private fun place(marker: Marker, point: LatLon?) {
-        marker.isEnabled = point != null
-        if (point != null) marker.position = GeoPoint(point.lat, point.lon)
-        view.invalidate()
+    fun destroy() {
+        pause()
+        stop()
+        if (!destroyed) {
+            destroyed = true
+            style = null
+            map = null
+            view.onDestroy()
+        }
+    }
+
+    private fun start() {
+        if (!started && !destroyed) { started = true; view.onStart() }
+    }
+
+    private fun resume() {
+        if (!resumed && !destroyed) { resumed = true; view.onResume() }
+    }
+
+    private fun pause() {
+        if (resumed) { resumed = false; view.onPause() }
+    }
+
+    private fun stop() {
+        if (started) { started = false; view.onStop() }
+    }
+
+    private fun loadStyle() {
+        val ready = map ?: return
+        if (shownDark == dark) return
+        shownDark = dark
+        style = null
+        val json = context.assets.open(if (dark) "map_dark.json" else "map_liberty.json").bufferedReader().use { it.readText() }
+        ready.setStyle(Style.Builder().fromJson(json)) { loaded ->
+            // A new style starts empty: our layers have to be added again every time.
+            loaded.addSource(GeoJsonSource(ROUTE))
+            loaded.addLayer(
+                LineLayer(ROUTE, ROUTE).withProperties(
+                    lineColor(Color.rgb(0x1E, 0x88, 0xE5)), lineWidth(5f),
+                    lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND),
+                ),
+            )
+            loaded.addSource(GeoJsonSource(MOCK))
+            loaded.addLayer(
+                CircleLayer(MOCK, MOCK).withProperties(
+                    circleRadius(9f), circleColor(Color.rgb(0x3D, 0xDC, 0x97)),
+                    circleStrokeWidth(3f), circleStrokeColor(Color.WHITE),
+                ),
+            )
+            ContextCompat.getDrawable(context, R.drawable.ic_pin)?.let { loaded.addImage(PIN, it) }
+            loaded.addSource(GeoJsonSource(PIN))
+            loaded.addLayer(
+                SymbolLayer(PIN, PIN).withProperties(
+                    iconImage(PIN), iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    iconAllowOverlap(true), iconIgnorePlacement(true),
+                ),
+            )
+            style = loaded
+            draw()
+            pendingCamera?.invoke()
+            pendingCamera = null
+        }
+    }
+
+    private fun whenReady(action: (MapLibreMap) -> Unit) {
+        val ready = map
+        if (ready != null && style != null) action(ready) else pendingCamera = { map?.let(action) }
+    }
+
+    private fun draw() {
+        val loaded = style ?: return
+        loaded.getSourceAs<GeoJsonSource>(ROUTE)?.setGeoJson(
+            if (route.size < 2) NOTHING
+            else FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(route.map { Point.fromLngLat(it.lon, it.lat) }))),
+        )
+        loaded.getSourceAs<GeoJsonSource>(MOCK)?.setGeoJson(point(mock))
+        loaded.getSourceAs<GeoJsonSource>(PIN)?.setGeoJson(point(pin))
+    }
+
+    private fun point(at: LatLon?): FeatureCollection =
+        if (at == null) NOTHING else FeatureCollection.fromFeature(Feature.fromGeometry(Point.fromLngLat(at.lon, at.lat)))
+
+    private companion object {
+        const val ROUTE = "wander-route"
+        const val MOCK = "wander-mock"
+        const val PIN = "wander-pin"
+        val NOTHING: FeatureCollection = FeatureCollection.fromFeatures(emptyList<Feature>())
     }
 }
-
-/**
- * Night palette: invert the brightness, then turn the hue half a circle so colours come back to where they
- * were – sea stays blue, woods green – just dark. A plain invert gives brown sea and purple land.
- */
-private val NIGHT = ColorMatrixColorFilter(
-    floatArrayOf(
-        0.574f, -1.43f, -0.144f, 0f, 255f,
-        -0.426f, -0.43f, -0.144f, 0f, 255f,
-        -0.426f, -1.43f, 0.856f, 0f, 255f,
-        0f, 0f, 0f, 1f, 0f,
-    ),
-)

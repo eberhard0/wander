@@ -26,7 +26,7 @@ The app walks you through both steps on first launch.
 
 ## Network use
 
-Map tiles and place search come from OpenStreetMap (tile server, Nominatim); walking routes from
+Map tiles come from OpenFreeMap (vector tiles, English labels), place search from OpenStreetMap's Nominatim; walking routes from
 `routing.openstreetmap.de`. Nothing else leaves the phone, and there are no analytics.
 
 ## Responsible use

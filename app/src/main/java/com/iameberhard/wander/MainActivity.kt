@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class MainActivity : ComponentActivity() {
@@ -125,13 +126,17 @@ private fun App(vm: MainViewModel) {
     // Coming back from Developer options is the moment the answer can have changed.
     LifecycleResumeEffect(Unit) {
         mockAllowed = MockService.isMockApp(context)
-        holder.view.onResume()
-        onPauseOrDispose {
-            holder.saveCamera()
-            holder.view.onPause()
+        onPauseOrDispose { holder.saveCamera() }
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        // Adding the observer replays start/resume, so the map comes up in step with the activity.
+        lifecycle.addObserver(holder.lifecycleObserver)
+        onDispose {
+            lifecycle.removeObserver(holder.lifecycleObserver)
+            holder.destroy()
         }
     }
-    DisposableEffect(Unit) { onDispose { holder.view.onDetach() } }
 
     LaunchedEffect(dark) { holder.setDark(dark) }
     LaunchedEffect(vm.selection) { holder.showPin(vm.selection?.point) }
@@ -225,7 +230,7 @@ private fun App(vm: MainViewModel) {
             }
 
             Text(
-                "© OpenStreetMap contributors",
+                "© OpenFreeMap · © OpenStreetMap contributors",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 modifier = Modifier.align(Alignment.End),

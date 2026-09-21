@@ -15,6 +15,8 @@ android {
         // CI passes the run number / tag through the environment; local builds fall back to 1 / 1.0.0.
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
+        // The map's native renderer is ~13 MB per CPU type; this is a personal app for a current phone.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     // Upload key supplied by CI through the environment (KEYSTORE_FILE, KEYSTORE_PASSWORD,
@@ -86,5 +88,5 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.core)
 
-    implementation(libs.osmdroid.android)
+    implementation(libs.maplibre.android)
 }
