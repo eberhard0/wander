@@ -1,6 +1,10 @@
 package com.iameberhard.wander
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Application
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -8,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -143,6 +148,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun restoreRealLocation() {
         MockService.stop(app)
         clearSelection()
+        wakeRealLocation()
+    }
+
+    /**
+     * After a session the GPS is cold and the system still has our last mock fix cached, so other apps
+     * wait until somebody asks for a fresh one. Ask straight away, on every provider, so that wait is short.
+     */
+    @SuppressLint("MissingPermission")
+    private fun wakeRealLocation() {
+        if (app.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            message = "Real location restored. Tip: tap the location button once and allow access – Wander can then bring the real fix back faster."
+            return
+        }
+        message = "Waiting for the real location…"
+        viewModelScope.launch {
+            // Let the service take its test providers down first, or we'd just be handed the mock fix back.
+            delay(1000)
+            val manager = app.getSystemService(LocationManager::class.java)
+            var answered = false
+            for (provider in listOf("fused", LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
+                if (!runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)) continue
+                manager.getCurrentLocation(provider, null, app.mainExecutor) { fix ->
+                    @Suppress("DEPRECATION")
+                    if (fix != null && !fix.isFromMockProvider && !answered && !MockService.session.value.active) {
+                        answered = true
+                        message = "Real location is back (±${fix.accuracy.toInt()} m)."
+                    }
+                }
+            }
+        }
     }
 
     fun changeSpeed(mps: Double) {
