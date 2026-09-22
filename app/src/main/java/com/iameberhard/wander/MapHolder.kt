@@ -13,10 +13,12 @@ import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circlePitchAlignment
 import org.maplibre.android.style.layers.PropertyFactory.circleRadius
 import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
 import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
@@ -52,6 +54,8 @@ class MapHolder(private val context: Context, private val places: Places, onTap:
     private var shownDark: Boolean? = null
     private var pin: LatLon? = null
     private var mock: LatLon? = null
+    private var real: LatLon? = null
+    private var realAccuracyM: Float? = null
     private var route: List<LatLon> = emptyList()
     /** A camera move asked for before the map was ready. */
     private var pendingCamera: (() -> Unit)? = null
@@ -110,6 +114,12 @@ class MapHolder(private val context: Context, private val places: Places, onTap:
 
     fun showMock(point: LatLon?) {
         mock = point
+        draw()
+    }
+
+    fun showReal(point: LatLon?, accuracyM: Float?) {
+        real = point
+        realAccuracyM = accuracyM
         draw()
     }
 
@@ -188,6 +198,27 @@ class MapHolder(private val context: Context, private val places: Places, onTap:
                     lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND),
                 ),
             )
+            // Real position: the familiar blue dot, with its accuracy as a translucent disc underneath.
+            loaded.addSource(GeoJsonSource(REAL))
+            loaded.addLayer(
+                CircleLayer(REAL_ACCURACY, REAL).withProperties(
+                    circleRadius(
+                        Expression.interpolate(
+                            Expression.exponential(2f), Expression.zoom(),
+                            Expression.stop(0, 0f),
+                            Expression.stop(22, Expression.get("radius_px")),
+                        ),
+                    ),
+                    circleColor(Color.argb(40, 0x42, 0x85, 0xF4)), circleStrokeWidth(0f),
+                    circlePitchAlignment(Property.CIRCLE_PITCH_ALIGNMENT_MAP),
+                ),
+            )
+            loaded.addLayer(
+                CircleLayer(REAL, REAL).withProperties(
+                    circleRadius(8f), circleColor(Color.rgb(0x42, 0x85, 0xF4)),
+                    circleStrokeWidth(3f), circleStrokeColor(Color.WHITE),
+                ),
+            )
             loaded.addSource(GeoJsonSource(MOCK))
             loaded.addLayer(
                 CircleLayer(MOCK, MOCK).withProperties(
@@ -221,8 +252,18 @@ class MapHolder(private val context: Context, private val places: Places, onTap:
             if (route.size < 2) NOTHING
             else FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(route.map { Point.fromLngLat(it.lon, it.lat) }))),
         )
+        loaded.getSourceAs<GeoJsonSource>(REAL)?.setGeoJson(realFeature())
         loaded.getSourceAs<GeoJsonSource>(MOCK)?.setGeoJson(point(mock))
         loaded.getSourceAs<GeoJsonSource>(PIN)?.setGeoJson(point(pin))
+    }
+
+    /** The dot, carrying its accuracy radius in pixels at zoom 22 (where 1 px ≈ 0.037 m at the equator). */
+    private fun realFeature(): FeatureCollection {
+        val at = real ?: return NOTHING
+        val feature = Feature.fromGeometry(Point.fromLngLat(at.lon, at.lat))
+        val metresPerPixelAtZ22 = 0.0373 * Math.cos(Math.toRadians(at.lat))
+        feature.addNumberProperty("radius_px", ((realAccuracyM ?: 0f) / metresPerPixelAtZ22).toFloat())
+        return FeatureCollection.fromFeature(feature)
     }
 
     private fun point(at: LatLon?): FeatureCollection =
@@ -230,6 +271,8 @@ class MapHolder(private val context: Context, private val places: Places, onTap:
 
     private companion object {
         const val ROUTE = "wander-route"
+        const val REAL = "wander-real"
+        const val REAL_ACCURACY = "wander-real-accuracy"
         const val MOCK = "wander-mock"
         const val PIN = "wander-pin"
         val NOTHING: FeatureCollection = FeatureCollection.fromFeatures(emptyList<Feature>())

@@ -4,7 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -30,6 +33,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** The pin the user is looking at, not yet acted on. */
     var selection by mutableStateOf<Place?>(null)
         private set
+
+    /** Where the phone really is, while nothing is being mocked; null until a real fix arrives. */
+    var realPosition by mutableStateOf<LatLon?>(null)
+        private set
+    var realAccuracyM by mutableStateOf<Float?>(null)
+        private set
+
+    private var tracking = false
+    private val realListener = LocationListener { location -> acceptReal(location) }
+
+    /**
+     * Follows the real position while the app is on screen and no session is active. Nothing runs in
+     * the background, and nothing at all without the location permission.
+     */
+    @SuppressLint("MissingPermission")
+    fun startTrackingReal() {
+        if (tracking) return
+        if (app.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        val manager = app.getSystemService(LocationManager::class.java)
+        val providers = listOf("fused", LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
+            .filter { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
+        if (providers.isEmpty()) return
+        // Something to show straight away, before the first fresh fix.
+        providers.mapNotNull { runCatching { manager.getLastKnownLocation(it) }.getOrNull() }
+            .filter { System.currentTimeMillis() - it.time < 5 * 60_000 }
+            .maxByOrNull { it.time }?.let(::acceptReal)
+        for (provider in providers) {
+            runCatching { manager.requestLocationUpdates(provider, 2000L, 0f, realListener, Looper.getMainLooper()) }
+        }
+        tracking = true
+    }
+
+    fun stopTrackingReal() {
+        if (!tracking) return
+        app.getSystemService(LocationManager::class.java).removeUpdates(realListener)
+        tracking = false
+    }
+
+    private fun acceptReal(location: Location) {
+        // A leftover mock fix is exactly what we must not show as "you are here".
+        if (location.isFromMockProvider) return
+        val current = realAccuracyM
+        // Keep a sharper recent fix over a vaguer new one (cell tower after GPS).
+        if (current != null && location.hasAccuracy() && location.accuracy > current * 3 && location.accuracy > 100f) return
+        realPosition = LatLon(location.latitude, location.longitude)
+        realAccuracyM = if (location.hasAccuracy()) location.accuracy else null
+    }
+
+    fun clearReal() {
+        realPosition = null
+        realAccuracyM = null
+    }
 
     /** A place the map should move to; the screen consumes it with [jumped]. */
     var jumpTo by mutableStateOf<Place?>(null)
@@ -128,6 +183,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setFixed(place: Place) {
+        // From here on the system reports the mock position; the real one is unknown until Restore.
+        stopTrackingReal()
+        clearReal()
         MockService.clearError()
         MockService.fixed(app, place.point)
         record(place)
@@ -150,6 +208,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startWalk() {
         val route = preview ?: return
+        stopTrackingReal()
+        clearReal()
         MockService.clearError()
         MockService.walk(app, route.points, speed)
         selection?.let(::record)
@@ -169,6 +229,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun restoreRealLocation() {
         MockService.stop(app)
         clearSelection()
+        clearReal()
         wakeRealLocation()
     }
 
@@ -194,6 +255,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     @Suppress("DEPRECATION")
                     if (fix != null && !fix.isFromMockProvider && !answered && !MockService.session.value.active) {
                         answered = true
+                        acceptReal(fix)
                         message = "Real location is back (±${fix.accuracy.toInt()} m)."
                     }
                 }
@@ -229,6 +291,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun show(text: String) {
         message = text
     }
+
+    override fun onCleared() = stopTrackingReal()
 
     private fun record(place: Place) {
         places.addToHistory(place)

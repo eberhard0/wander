@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -147,12 +148,23 @@ private fun App(vm: MainViewModel) {
     }
     LaunchedEffect(vm.selection) { holder.showPin(vm.selection?.point) }
     LaunchedEffect(session.position) { holder.showMock(session.position) }
+    LaunchedEffect(vm.realPosition, vm.realAccuracyM) { holder.showReal(vm.realPosition, vm.realAccuracyM) }
+
+    // The blue dot only makes sense while nothing is mocked, and only while we're on screen.
+    var locationGranted by remember { mutableStateOf(context.has(Manifest.permission.ACCESS_COARSE_LOCATION)) }
+    LifecycleStartEffect(session.active, locationGranted) {
+        if (!session.active && locationGranted) vm.startTrackingReal()
+        onStopOrDispose { vm.stopTrackingReal() }
+    }
     val line = vm.preview?.points ?: session.route
     LaunchedEffect(line) { holder.showRoute(line, fit = vm.preview != null) }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.any { it }) showRealLocation(context, holder, vm)
+        if (granted.values.any { it }) {
+            locationGranted = true
+            showRealLocation(context, holder, vm)
+        }
     }
 
     fun go(place: Place) {
@@ -202,8 +214,10 @@ private fun App(vm: MainViewModel) {
             SmallFloatingActionButton(
                 onClick = {
                     val mock = session.position
+                    val real = vm.realPosition
                     when {
                         mock != null -> holder.centreOn(mock)
+                        real != null -> holder.centreOn(real)
                         context.has(Manifest.permission.ACCESS_COARSE_LOCATION) -> showRealLocation(context, holder, vm)
                         else -> locationPermission.launch(
                             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
