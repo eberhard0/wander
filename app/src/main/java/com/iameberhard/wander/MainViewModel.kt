@@ -31,6 +31,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var selection by mutableStateOf<Place?>(null)
         private set
 
+    /** A place the map should move to; the screen consumes it with [jumped]. */
+    var jumpTo by mutableStateOf<Place?>(null)
+        private set
+
+    fun jumped() {
+        jumpTo = null
+    }
+
     /** A walking route waiting for "Start walk". */
     var preview by mutableStateOf<Route?>(null)
         private set
@@ -70,14 +78,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             results = emptyList()
             val place = Place("Entered coordinates", it.lat, it.lon)
             select(place)
+            jumpTo = place
             return place
         }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             searching = true
             try {
-                results = withContext(Dispatchers.IO) { Net.search(text) }
-                if (results.isEmpty()) message = "Nothing found for \"$text\"."
+                val found = withContext(Dispatchers.IO) { Net.search(text) }
+                if (found.isEmpty()) {
+                    results = emptyList()
+                    message = "Nothing found for \"$text\"."
+                } else {
+                    // Go to the best match at once; the others stay listed in case it was the wrong one.
+                    select(found.first())
+                    results = found
+                    jumpTo = found.first()
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 message = "Search failed – check the connection."

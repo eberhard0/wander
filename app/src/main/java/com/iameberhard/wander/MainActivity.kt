@@ -139,6 +139,12 @@ private fun App(vm: MainViewModel) {
     }
 
     LaunchedEffect(dark) { holder.setDark(dark) }
+    LaunchedEffect(vm.jumpTo) {
+        vm.jumpTo?.let {
+            holder.centreOn(it.point)
+            vm.jumped()
+        }
+    }
     LaunchedEffect(vm.selection) { holder.showPin(vm.selection?.point) }
     LaunchedEffect(session.position) { holder.showMock(session.position) }
     val line = vm.preview?.points ?: session.route
@@ -178,7 +184,7 @@ private fun App(vm: MainViewModel) {
                 vm,
                 onSearch = {
                     focus.clearFocus()
-                    vm.search()?.let { holder.centreOn(it.point) }
+                    vm.search()
                 },
                 onPlaces = { showPlaces = true },
             )
