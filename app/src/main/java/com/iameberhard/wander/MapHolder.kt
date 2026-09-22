@@ -130,8 +130,13 @@ class MapHolder(private val context: Context, private val places: Places, onTap:
 
     fun centreOn(point: LatLon) {
         whenReady { map ->
+            val target = LatLng(point.lat, point.lon)
             val zoom = maxOf(map.cameraPosition.zoom, 15.0)
-            map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(point.lat, point.lon), zoom), 600)
+            val update = CameraUpdateFactory.newLatLngZoom(target, zoom)
+            // A long fly-to gets dropped when the keyboard closing resizes the map mid-flight (which is
+            // exactly when a search result is picked), so far-away places are jumped to instead.
+            val far = map.cameraPosition.target?.let { Geo.distance(LatLon(it.latitude, it.longitude), point) > 20_000 } ?: true
+            if (far) map.moveCamera(update) else map.easeCamera(update, 600)
         }
     }
 

@@ -61,13 +61,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun search() {
+    /** Typed coordinates select the spot straight away and are returned so the map can go there. */
+    fun search(): Place? {
         val text = query.trim()
-        if (text.isEmpty()) return
+        if (text.isEmpty()) return null
         message = null
         Geo.parseCoordinates(text)?.let {
             results = emptyList()
-            return select(Place("Entered coordinates", it.lat, it.lon))
+            val place = Place("Entered coordinates", it.lat, it.lon)
+            select(place)
+            return place
         }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
@@ -82,6 +85,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 searching = false
             }
         }
+        return null
     }
 
     fun clearSearch() {

@@ -174,7 +174,14 @@ private fun App(vm: MainViewModel) {
                 .widthIn(max = 440.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SearchBar(vm, onSearch = { focus.clearFocus(); vm.search() }, onPlaces = { showPlaces = true })
+            SearchBar(
+                vm,
+                onSearch = {
+                    focus.clearFocus()
+                    vm.search()?.let { holder.centreOn(it.point) }
+                },
+                onPlaces = { showPlaces = true },
+            )
             if (vm.results.isNotEmpty()) ResultList(vm.results, ::go)
         }
 
